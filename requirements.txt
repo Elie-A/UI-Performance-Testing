@@ -1,0 +1,8 @@
+robotframework
+robotframework-browser
+playwright
+screeninfo
+python-dotenv
+psutil
+Jinja2
+flask

@@ -1,0 +1,4 @@
+python-path = ["pages", "utils", "resources", "."]
+output-dir = "reports"
+log-level = "TRACE"
+paths = ["./tests"]

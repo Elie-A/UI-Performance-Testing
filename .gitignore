@@ -1,0 +1,8 @@
+.venv/
+reports/
+results/
+__pycache__/
+utils/__pycache__/
+utils/*/__pycache__/
+pages/__pycache__/
+pages/*/__pycache__/
