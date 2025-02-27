@@ -6,3 +6,5 @@ python-dotenv
 psutil
 Jinja2
 flask
+watchdog
+flask_sock

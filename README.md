@@ -53,6 +53,7 @@ This Proof of Concept (PoC) project aims to evaluate the feasibility and effecti
     - Windows: `.\.venv\Scripts\activate`
     - If you encounter an error, type this command: `Set-ExecutionPolicy RemoteSigned -Scope CurrentUser`, then recreate your virtual environment
 - Install requirements, whilst in the virtual environment, enter this command: `pip install -r ./requirements.txt`
+- Install playwright wrapper using this command: `rfbrowser init`
 - Create your **launch.json** file:
   - If _.vscode_ directory does not exist, you can create it under the project root directory
 - Create your launch.json file, as a sample you may use the below sample:

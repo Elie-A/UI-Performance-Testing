@@ -106,15 +106,14 @@ class PerformanceMonitor:
 
     @contextmanager
     def measure_action(self, action_name: str, user_id: Optional[str] = None, params: Optional[Dict] = None):
-        """Context manager to measure action duration."""
+        """Context manager to measure action duration and save incrementally."""
         if not self._is_performance_monitoring_enabled:
-            yield # Skip monitoring
+            yield
             return
         self._ensure_test_info()
         self._local.test_info['step_order'] += 1
         step_order = self._local.test_info['step_order']
 
-        # Log when the action is being measured
         logger.info(f"Measuring action: {action_name} - Step Order: {step_order}")
         start_time = time.perf_counter()
         try:
@@ -133,55 +132,63 @@ class PerformanceMonitor:
                 "memory_usage": f"{psutil.virtual_memory().used / (1024 ** 2):.2f} MB",
             }
 
-            # Lock to ensure thread-safety while modifying the shared metrics
             with self._lock:
-                self._metrics[self._local.test_info['test_name']]["actions"].append(action_data)
+                test_name = self._local.test_info['test_name']
+                self._metrics[test_name]["actions"].append(action_data)
+                self._update_summary(test_name)
+                self._save_metrics(test_name)  # Save after each action
 
-            # Log action details for debugging
             logger.info(f"Action recorded: {json.dumps(action_data, indent=2)}")
-
-            # After recording the action, update the summary of actions
-            self._update_summary(self._local.test_info['test_name'])
 
     def _update_summary(self, test_name: str):
         """Update the action summary after an action is recorded."""
-        if not self._is_performance_monitoring_enabled:
-            logger.info(f"Performance monitoring is disabled. Skipping summary update for test: {test_name}.")
+        if not self._is_performance_monitoring_enabled or test_name not in self._metrics:
             return
-    
-        if test_name in self._metrics:
-            metrics = self._metrics[test_name]
-            actions = metrics.get("actions", [])
 
-            # Reset the summary to ensure no cumulative additions
-            summary = {}
+        metrics = self._metrics[test_name]
+        actions = metrics.get("actions", [])
+        summary = {}
 
-            for action in actions:
-                action_name = action["action"]
-                if action_name not in summary:
-                    summary[action_name] = {
-                        "count": 0,
-                        "total_duration": 0,
-                        "min_duration": float('inf'),
-                        "max_duration": 0,
-                    }
+        for action in actions:
+            action_name = action["action"]
+            if action_name not in summary:
+                summary[action_name] = {
+                    "count": 0,
+                    "total_duration": 0,
+                    "min_duration": float('inf'),
+                    "max_duration": 0,
+                }
+            summary[action_name]["count"] += 1
+            summary[action_name]["total_duration"] += action["duration"]
+            summary[action_name]["min_duration"] = min(summary[action_name]["min_duration"], action["duration"])
+            summary[action_name]["max_duration"] = max(summary[action_name]["max_duration"], action["duration"])
+            summary[action_name]["avg_duration"] = summary[action_name]["total_duration"] / summary[action_name]["count"]
 
-                summary[action_name]["count"] += 1
-                summary[action_name]["total_duration"] += action["duration"]
-                summary[action_name]["min_duration"] = min(
-                    summary[action_name]["min_duration"], action["duration"]
-                )
-                summary[action_name]["max_duration"] = max(
-                    summary[action_name]["max_duration"], action["duration"]
-                )
+        metrics["summary"] = summary
 
-            # Calculate average duration
-            for action_name, data in summary.items():
-                data["avg_duration"] = data["total_duration"] / data["count"]
+    def _save_metrics(self, test_name: str):
+            """Save metrics for a specific test to file."""
+            if not self._is_performance_monitoring_enabled or test_name not in self._metrics:
+                return
 
-            # Update metrics summary
-            metrics["summary"] = summary
+            results_dir = self._get_results_dir()
+            os.makedirs(results_dir, exist_ok=True)
+            suite_name = BuiltIn().get_variable_value("${SUITE_NAME}", "default_suite")
+            filename = os.path.join(results_dir, f"{suite_name}_metrics.json")
+            
+            with open(filename, 'w') as f:
+                json.dump(self._metrics[test_name], f, indent=2)
+                logger.info(f"Metrics incrementally saved to {filename}")
 
+    def save_metrics(self):
+        """Save all metrics to files at the end of the test."""
+        if not self._is_performance_monitoring_enabled:
+            logger.info("Performance monitoring is disabled. No metrics to save.")
+            return
+        
+        for test_name in self._metrics.keys():
+            self._save_metrics(test_name)
+        logger.info("Final metrics saved.")
 
     def save_metrics(self):
         """Save all metrics to files and ensure summary is populated."""
@@ -209,73 +216,26 @@ class PerformanceMonitor:
 
     def generate_report(self, test_name: str) -> Dict:
         """Generate performance report for a specific test."""
-        if not self._is_performance_monitoring_enabled:
-            logger.info("Performance monitoring is disabled. No report generated.")
+        if not self._is_performance_monitoring_enabled or test_name not in self._metrics:
             return {}
         
-        if test_name not in self._metrics:
-            return {}
-
+        self._update_summary(test_name)
         metrics = self._metrics[test_name]
-        actions_summary = {}
-
-        # Summarize actions performance
-        for action in metrics["actions"]:
-            action_name = action["action"]
-            if action_name not in actions_summary:
-                actions_summary[action_name] = {
-                    "count": 0,
-                    "total_duration": 0,
-                    "min_duration": float('inf'),
-                    "max_duration": 0,
-                }
-
-            actions_summary[action_name]["count"] += 1
-            actions_summary[action_name]["total_duration"] += action["duration"]
-            actions_summary[action_name]["min_duration"] = min(
-                actions_summary[action_name]["min_duration"], action["duration"]
-            )
-            actions_summary[action_name]["max_duration"] = max(
-                actions_summary[action_name]["max_duration"], action["duration"]
-            )
-
-        for action_name, summary in actions_summary.items():
-            summary["avg_duration"] = summary["total_duration"] / summary["count"]
-
-        # Include system and execution context info
-        performance_report = {
+        return {
             "test_case_id": test_name,
             "start_time": metrics["start_time"],
-            "system_info": metrics["system_info"],  # Ensure this includes OS, CPU, and Memory
+            "system_info": metrics["system_info"],
             "execution_context": metrics["execution_context"],
-            "summary": actions_summary,
-            "current_time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),  # Current time for the report
-            "actions": metrics["actions"]
+            "summary": metrics["summary"],
+            "actions": metrics["actions"],
+            "current_time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         }
-
-        return performance_report
 
     def generate_html_report(self, suite_name: str):
         if not self._is_performance_monitoring_enabled:
             logger.info("Performance monitoring is disabled. No HTML report generated.")
             return None
         
-        """Generate an HTML report based on the metrics collected and the template."""
-        # Define the template directory and ensure it exists
-        template_dir = os.path.join(os.getcwd(), 'templates')  # Default 'templates' folder
-        if not os.path.isdir(template_dir):
-            raise FileNotFoundError(f"Template directory '{template_dir}' does not exist.")
-
-        # Initialize Jinja2 environment
-        env = Environment(loader=FileSystemLoader(template_dir))
-
-        # Load the HTML template
-        try:
-            template = env.get_template('performance_report_template.html')
-        except Exception as e:
-            raise FileNotFoundError(f"Template 'performance_report_template.html' not found in '{template_dir}'.") from e
-
-        # Load metrics from the saved JSON file
         results_dir = self._get_results_dir()
         metrics_file = os.path.join(results_dir, f"{suite_name}_metrics.json")
         if not os.path.exists(metrics_file):
@@ -283,10 +243,17 @@ class PerformanceMonitor:
 
         with open(metrics_file, 'r') as f:
             metrics = json.load(f)
-            
-        logger.info(f"Loaded metrics for {suite_name}: {json.dumps(metrics, indent=2)}")
 
-        # Prepare data for rendering the template
+        template_dir = os.path.join(os.getcwd(), 'templates')
+        if not os.path.isdir(template_dir):
+            raise FileNotFoundError(f"Template directory '{template_dir}' does not exist.")
+
+        env = Environment(loader=FileSystemLoader(template_dir))
+        try:
+            template = env.get_template('performance_report_template.html')
+        except Exception as e:
+            raise FileNotFoundError(f"Template 'performance_report_template.html' not found in '{template_dir}'.") from e
+
         report_data = {
             "test_case_id": metrics.get("test_case_id", "N/A"),
             "start_time": metrics.get("start_time", "N/A"),
@@ -294,22 +261,14 @@ class PerformanceMonitor:
             "execution_context": metrics.get("execution_context", {}),
             "summary": metrics.get("summary", {}),
             "actions": metrics.get("actions", []),
-            "current_time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),  # Add the current timestamp
+            "current_time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         }
 
-        # Render the template
-        try:
-            html_content = template.render(report_data)
-        except Exception as e:
-            logger.error("Error rendering HTML template:", exc_info=e)
-            raise RuntimeError("Failed to render HTML report.") from e
-
-        # Save the generated HTML report
+        html_content = template.render(report_data)
         report_file = os.path.join(results_dir, f"{suite_name}_performance_report.html")
         with open(report_file, 'w') as f:
             f.write(html_content)
-
-        # Log the report location
+        
         logger.info(f"Performance report saved to {report_file}")
         return report_file
 

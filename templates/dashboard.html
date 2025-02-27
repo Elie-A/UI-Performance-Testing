@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Robot Framework Performance Dashboard</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.1.3/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.1.3/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.7.0/chart.min.js"></script>
+    <style>
+        body {
+            padding-top: 20px;
+            background-color: #f5f5f5;
+        }
+        .card {
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        .card-header {
+            font-weight: bold;
+            background-color: #f8f9fa;
+        }
+        .metric-value {
+            font-size: 24px;
+            font-weight: bold;
+        }
+        .system-info {
+            font-size: 14px;
+        }
+        .chart-container {
+            position: relative;
+            height: 300px;
+            width: 100%;
+        }
+        .last-updated {
+            font-size: 12px;
+            color: #6c757d;
+            text-align: right;
+            padding-right: 15px;
+        }
+        #loading-indicator {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            z-index: 9999;
+        }
+        .test-section {
+            margin-bottom: 30px;
+            border-top: 1px solid #dee2e6;
+            padding-top: 20px;
+        }
+        .test-title {
+            margin-bottom: 20px;
+            padding-left: 15px;
+            border-left: 4px solid #007bff;
+        }
+        .collapse-toggle {
+            cursor: pointer;
+            color: #007bff;
+        }
+        .collapse-toggle:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container-fluid">
+        <div id="loading-indicator" class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+        
+        <div class="row">
+            <div class="col-12">
+                <h1 class="mb-4">Robot Framework Performance Dashboard</h1>
+                <div class="last-updated">Last updated: <span id="last-update-time">Never</span></div>
+            </div>
+        </div>
+        
+        <!-- System Information -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="card">
+                    <div class="card-header">Operating System</div>
+                    <div class="card-body">
+                        <div id="os-info" class="metric-value">-</div>
+                        <div id="os-version" class="system-info">-</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card">
+                    <div class="card-header">CPU Usage</div>
+                    <div class="card-body">
+                        <div id="cpu-usage" class="metric-value">-</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card">
+                    <div class="card-header">Memory</div>
+                    <div class="card-body">
+                        <div id="memory-info" class="metric-value">-</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card">
+                    <div class="card-header">Active Tests</div>
+                    <div class="card-body">
+                        <div id="active-tests-count" class="metric-value">0</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Test Overview Section -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        Tests Overview
+                        <button class="btn btn-sm btn-outline-primary float-end" id="expand-all-btn">Expand All</button>
+                        <button class="btn btn-sm btn-outline-secondary float-end me-2" id="collapse-all-btn">Collapse All</button>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-striped table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>Test Name</th>
+                                        <th>Status</th>
+                                        <th>Actions</th>
+                                        <th>Avg Duration</th>
+                                        <th>Total Duration</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="tests-overview-body">
+                                    <!-- Populated by JavaScript -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Test Details Container - All tests shown here -->
+        <div id="test-details-container">
+            <!-- Test sections will be populated here by JavaScript -->
+        </div>
+    </div>
+
+    <script>
+        // Maps to store charts for each test
+    const actionDurationCharts = {};
+    const resourceUsageCharts = {};
+    let expandedTests = new Set();
+
+    // Format date and time
+    function formatDateTime(dateTimeStr) {
+        const date = new Date(dateTimeStr);
+        return date.toLocaleString();
+    }
+
+    // Format seconds to display with 3 decimal places
+    function formatSeconds(seconds) {
+        return seconds.toFixed(3);
+    }
+
+    // WebSocket connection setup
+    function setupWebSocket() {
+        const ws = new WebSocket('ws://' + window.location.host + '/ws/metrics');
+
+        ws.onopen = function() {
+            console.log('WebSocket connection established');
+            $('#loading-indicator').hide();
+        };
+
+        ws.onmessage = function(event) {
+            const data = JSON.parse(event.data);
+            const metrics = data.metrics;
+            const lastUpdate = data.last_update;
+
+            // Update last update time
+            if (lastUpdate) {
+                const updateTime = new Date(lastUpdate * 1000);
+                $('#last-update-time').text(updateTime.toLocaleString());
+            }
+
+            // Get sorted test names
+            const testNames = Object.keys(metrics).sort();
+
+            // Update system info (could also be sent via WebSocket if dynamic)
+            updateSystemInfo();
+
+            // Update active tests count
+            $('#active-tests-count').text(testNames.length);
+
+            // Update tests overview
+            updateTestsOverview(metrics, testNames);
+
+            // Update or create test details for all tests
+            updateAllTestDetails(metrics, testNames);
+        };
+
+        ws.onerror = function(error) {
+            console.error('WebSocket error:', error);
+            $('#loading-indicator').hide();
+        };
+
+        ws.onclose = function() {
+            console.log('WebSocket connection closed, attempting to reconnect...');
+            $('#loading-indicator').show();
+            setTimeout(setupWebSocket, 1000); // Reconnect after 1 second
+        };
+    }
+
+    // Update system information (kept as AJAX for initial load or if not part of WebSocket data)
+    function updateSystemInfo() {
+        $.getJSON('/api/system_info', function(data) {
+            $('#os-info').text(data.os || '-');
+            $('#os-version').text(data.os_version || '-');
+            $('#cpu-usage').text(data.cpu || '-');
+            $('#memory-info').text(data.memory || '-');
+        });
+    }
+
+    // Update tests overview
+    function updateTestsOverview(metrics, testNames) {
+        const tbody = $('#tests-overview-body');
+        tbody.empty();
+
+        testNames.forEach(function(testName) {
+            const testData = metrics[testName];
+            const row = $('<tr>');
+
+            let totalActions = 0;
+            let avgDuration = 0;
+            let totalDuration = 0;
+
+            if (testData.actions && testData.actions.length > 0) {
+                totalActions = testData.actions.length;
+                totalDuration = testData.actions.reduce((sum, action) => sum + action.duration, 0);
+                avgDuration = totalDuration / totalActions;
+            }
+
+            const status = testData.status || 'Running';
+            const statusClass = status === 'Completed' ? 'success' : 'primary';
+
+            row.append($('<td>').text(testName));
+            row.append($('<td>').html(`<span class="badge bg-${statusClass}">${status}</span>`));
+            row.append($('<td>').text(totalActions));
+            row.append($('<td>').text(formatSeconds(avgDuration) + 's'));
+            row.append($('<td>').text(formatSeconds(totalDuration) + 's'));
+
+            const actionsCell = $('<td>');
+            const expandBtn = $('<button>')
+                .addClass('btn btn-sm btn-outline-primary')
+                .attr('type', 'button')
+                .attr('data-test-name', testName)
+                .text(expandedTests.has(testName) ? 'Hide Details' : 'View Details')
+                .on('click', function() {
+                    const testSectionId = `test-section-${testName.replace(/\s+/g, '-')}`;
+                    const testSection = $(`#${testSectionId}`);
+
+                    if (testSection.hasClass('show')) {
+                        testSection.removeClass('show');
+                        $(this).text('View Details');
+                        expandedTests.delete(testName);
+                    } else {
+                        testSection.addClass('show');
+                        $(this).text('Hide Details');
+                        expandedTests.add(testName);
+                    }
+                });
+
+            actionsCell.append(expandBtn);
+            row.append(actionsCell);
+
+            tbody.append(row);
+        });
+    }
+        
+        // Update all test details
+        function updateAllTestDetails(metrics, testNames) {
+            const container = $('#test-details-container');
+            
+            // First, check for tests that no longer exist and remove them
+            container.find('.test-section').each(function() {
+                const testName = $(this).data('test-name');
+                if (!metrics[testName]) {
+                    $(this).remove();
+                    
+                    // Clean up charts
+                    if (actionDurationCharts[testName]) {
+                        actionDurationCharts[testName].destroy();
+                        delete actionDurationCharts[testName];
+                    }
+                    if (resourceUsageCharts[testName]) {
+                        resourceUsageCharts[testName].destroy();
+                        delete resourceUsageCharts[testName];
+                    }
+                }
+            });
+            
+            // Then update or create test sections
+            testNames.forEach(function(testName) {
+                const testData = metrics[testName];
+                const testSectionId = `test-section-${testName.replace(/\s+/g, '-')}`;
+                
+                // Check if section already exists
+                let testSection = $(`#${testSectionId}`);
+                
+                if (testSection.length === 0) {
+                    // Create new test section
+                    testSection = createTestSection(testName, testSectionId);
+                    container.append(testSection);
+                }
+                
+                // Update section content
+                updateTestSectionContent(testName, testData);
+                
+                // Show expanded sections
+                if (expandedTests.has(testName)) {
+                    testSection.addClass('show');
+                    $(`button[data-test-name="${testName}"]`).text('Hide Details');
+                }
+            });
+        }
+        
+        // Create a new test section
+        function createTestSection(testName, sectionId) {
+            const section = $('<div>')
+                .addClass('test-section collapse')
+                .attr('id', sectionId)
+                .attr('data-test-name', testName);
+            
+            // Test title
+            section.append($('<h3>').addClass('test-title').text(testName));
+            
+            // Charts row
+            const chartsRow = $('<div>').addClass('row');
+            
+            // Action Duration Chart
+            const actionChartCol = $('<div>').addClass('col-md-6');
+            const actionChartCard = $('<div>').addClass('card');
+            actionChartCard.append($('<div>').addClass('card-header').text('Action Duration Chart'));
+            
+            const actionChartBody = $('<div>').addClass('card-body');
+            const actionChartContainer = $('<div>').addClass('chart-container');
+            const actionCanvas = $('<canvas>')
+                .attr('id', `action-duration-chart-${testName.replace(/\s+/g, '-')}`);
+            
+            actionChartContainer.append(actionCanvas);
+            actionChartBody.append(actionChartContainer);
+            actionChartCard.append(actionChartBody);
+            actionChartCol.append(actionChartCard);
+            
+            // Resource Usage Chart
+            const resourceChartCol = $('<div>').addClass('col-md-6');
+            const resourceChartCard = $('<div>').addClass('card');
+            resourceChartCard.append($('<div>').addClass('card-header').text('Resource Usage Chart'));
+            
+            const resourceChartBody = $('<div>').addClass('card-body');
+            const resourceChartContainer = $('<div>').addClass('chart-container');
+            const resourceCanvas = $('<canvas>')
+                .attr('id', `resource-usage-chart-${testName.replace(/\s+/g, '-')}`);
+            
+            resourceChartContainer.append(resourceCanvas);
+            resourceChartBody.append(resourceChartContainer);
+            resourceChartCard.append(resourceChartBody);
+            resourceChartCol.append(resourceChartCard);
+            
+            // Add charts to row
+            chartsRow.append(actionChartCol);
+            chartsRow.append(resourceChartCol);
+            section.append(chartsRow);
+            
+            // Action Summary Table
+            const summaryRow = $('<div>').addClass('row mt-4');
+            const summaryCol = $('<div>').addClass('col-12');
+            const summaryCard = $('<div>').addClass('card');
+            summaryCard.append($('<div>').addClass('card-header').text('Action Summary'));
+            
+            const summaryBody = $('<div>').addClass('card-body');
+            const summaryTableContainer = $('<div>').addClass('table-responsive');
+            const summaryTable = $('<table>').addClass('table table-striped');
+            
+            // Add table header
+            const summaryThead = $('<thead>');
+            const summaryHeaderRow = $('<tr>');
+            summaryHeaderRow.append($('<th>').text('Action'));
+            summaryHeaderRow.append($('<th>').text('Count'));
+            summaryHeaderRow.append($('<th>').text('Avg Duration (s)'));
+            summaryHeaderRow.append($('<th>').text('Min Duration (s)'));
+            summaryHeaderRow.append($('<th>').text('Max Duration (s)'));
+            summaryHeaderRow.append($('<th>').text('Total Duration (s)'));
+            summaryThead.append(summaryHeaderRow);
+            
+            // Add table body
+            const summaryTbody = $('<tbody>')
+                .attr('id', `action-summary-body-${testName.replace(/\s+/g, '-')}`);
+            
+            summaryTable.append(summaryThead);
+            summaryTable.append(summaryTbody);
+            summaryTableContainer.append(summaryTable);
+            summaryBody.append(summaryTableContainer);
+            summaryCard.append(summaryBody);
+            summaryCol.append(summaryCard);
+            summaryRow.append(summaryCol);
+            section.append(summaryRow);
+            
+            // Action Details Table
+            const detailsRow = $('<div>').addClass('row mt-4');
+            const detailsCol = $('<div>').addClass('col-12');
+            const detailsCard = $('<div>').addClass('card');
+            detailsCard.append($('<div>').addClass('card-header').text('Action Details'));
+            
+            const detailsBody = $('<div>').addClass('card-body');
+            const detailsTableContainer = $('<div>').addClass('table-responsive');
+            const detailsTable = $('<table>').addClass('table table-striped table-sm');
+            
+            // Add table header
+            const detailsThead = $('<thead>');
+            const detailsHeaderRow = $('<tr>');
+            detailsHeaderRow.append($('<th>').text('Step #'));
+            detailsHeaderRow.append($('<th>').text('Action'));
+            detailsHeaderRow.append($('<th>').text('Start Time'));
+            detailsHeaderRow.append($('<th>').text('Duration (s)'));
+            detailsHeaderRow.append($('<th>').text('CPU Usage'));
+            detailsHeaderRow.append($('<th>').text('Memory Usage'));
+            detailsThead.append(detailsHeaderRow);
+            
+            // Add table body
+            const detailsTbody = $('<tbody>')
+                .attr('id', `action-details-body-${testName.replace(/\s+/g, '-')}`);
+            
+            detailsTable.append(detailsThead);
+            detailsTable.append(detailsTbody);
+            detailsTableContainer.append(detailsTable);
+            detailsBody.append(detailsTableContainer);
+            detailsCard.append(detailsBody);
+            detailsCol.append(detailsCard);
+            detailsRow.append(detailsCol);
+            section.append(detailsRow);
+            
+            return section;
+        }
+        
+        // Update content for a test section
+        function updateTestSectionContent(testName, testData) {
+            const safeTestName = testName.replace(/\s+/g, '-');
+            
+            // Update action summary table
+            updateActionSummary(testName, testData.summary || {});
+            
+            // Update action details table
+            updateActionDetails(testName, testData.actions || []);
+            
+            // Update charts
+            updateTestCharts(testName, testData);
+        }
+        
+        // Update action summary table for a specific test
+        function updateActionSummary(testName, summary) {
+            const safeTestName = testName.replace(/\s+/g, '-');
+            const tbody = $(`#action-summary-body-${safeTestName}`);
+            tbody.empty();
+            
+            Object.keys(summary).forEach(function(actionName) {
+                const data = summary[actionName];
+                const row = $('<tr>');
+                
+                row.append($('<td>').text(actionName));
+                row.append($('<td>').text(data.count));
+                row.append($('<td>').text(formatSeconds(data.avg_duration)));
+                row.append($('<td>').text(formatSeconds(data.min_duration)));
+                row.append($('<td>').text(formatSeconds(data.max_duration)));
+                row.append($('<td>').text(formatSeconds(data.total_duration)));
+                
+                tbody.append(row);
+            });
+        }
+        
+        // Update action details table for a specific test
+        function updateActionDetails(testName, actions) {
+            const safeTestName = testName.replace(/\s+/g, '-');
+            const tbody = $(`#action-details-body-${safeTestName}`);
+            tbody.empty();
+            
+            // Sort actions by step order
+            actions.sort((a, b) => a.step_order - b.step_order);
+            
+            actions.forEach(function(action) {
+                const row = $('<tr>');
+                
+                row.append($('<td>').text(action.step_order));
+                row.append($('<td>').text(action.action));
+                row.append($('<td>').text(formatDateTime(action.start_time)));
+                row.append($('<td>').text(formatSeconds(action.duration)));
+                row.append($('<td>').text(action.cpu_usage));
+                row.append($('<td>').text(action.memory_usage));
+                
+                tbody.append(row);
+            });
+        }
+        
+        // Update charts for a specific test
+        function updateTestCharts(testName, testData) {
+            const safeTestName = testName.replace(/\s+/g, '-');
+            const actions = testData.actions || [];
+            
+            // Prepare data for action duration chart
+            const actionLabels = actions.map(a => `${a.step_order}. ${a.action.substring(0, 20)}${a.action.length > 20 ? '...' : ''}`);
+            const actionDurations = actions.map(a => a.duration);
+            
+            // Prepare data for resource usage chart
+            const cpuUsage = actions.map(a => parseFloat(a.cpu_usage.replace('%', '')));
+            const memoryUsage = actions.map(a => parseFloat(a.memory_usage.split(' ')[0]));
+            
+            // Update or create action duration chart
+            if (actionDurationCharts[testName]) {
+                actionDurationCharts[testName].data.labels = actionLabels;
+                actionDurationCharts[testName].data.datasets[0].data = actionDurations;
+                actionDurationCharts[testName].update();
+            } else {
+                const ctx = document.getElementById(`action-duration-chart-${safeTestName}`).getContext('2d');
+                actionDurationCharts[testName] = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: actionLabels,
+                        datasets: [{
+                            label: 'Duration (seconds)',
+                            data: actionDurations,
+                            backgroundColor: 'rgba(54, 162, 235, 0.5)',
+                            borderColor: 'rgba(54, 162, 235, 1)',
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                title: {
+                                    display: true,
+                                    text: 'Seconds'
+                                }
+                            },
+                            x: {
+                                ticks: {
+                                    maxRotation: 45,
+                                    minRotation: 45
+                                }
+                            }
+                        },
+                        plugins: {
+                            title: {
+                                display: true,
+                                text: 'Action Duration'
+                            }
+                        }
+                    }
+                });
+            }
+            
+            // Update or create resource usage chart
+            if (resourceUsageCharts[testName]) {
+                resourceUsageCharts[testName].data.labels = actionLabels;
+                resourceUsageCharts[testName].data.datasets[0].data = cpuUsage;
+                resourceUsageCharts[testName].data.datasets[1].data = memoryUsage;
+                resourceUsageCharts[testName].update();
+            } else {
+                const ctx = document.getElementById(`resource-usage-chart-${safeTestName}`).getContext('2d');
+                resourceUsageCharts[testName] = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: actionLabels,
+                        datasets: [{
+                            label: 'CPU Usage (%)',
+                            data: cpuUsage,
+                            backgroundColor: 'rgba(255, 99, 132, 0.2)',
+                            borderColor: 'rgba(255, 99, 132, 1)',
+                            borderWidth: 1,
+                            yAxisID: 'y'
+                        }, {
+                            label: 'Memory Usage (MB)',
+                            data: memoryUsage,
+                            backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                            borderColor: 'rgba(75, 192, 192, 1)',
+                            borderWidth: 1,
+                            yAxisID: 'y1'
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            y: {
+                                type: 'linear',
+                                display: true,
+                                position: 'left',
+                                title: {
+                                    display: true,
+                                    text: 'CPU Usage (%)'
+                                }
+                            },
+                            y1: {
+                                type: 'linear',
+                                display: true,
+                                position: 'right',
+                                title: {
+                                    display: true,
+                                    text: 'Memory Usage (MB)'
+                                },
+                                grid: {
+                                    drawOnChartArea: false
+                                }
+                            },
+                            x: {
+                                ticks: {
+                                    maxRotation: 45,
+                                    minRotation: 45
+                                }
+                            }
+                        },
+                        plugins: {
+                            title: {
+                                display: true,
+                                text: 'Resource Usage'
+                            }
+                        }
+                    }
+                });
+            }
+        }
+        
+       // Initialize the page
+    $(document).ready(function() {
+        $('#loading-indicator').hide();
+
+        // Set up expand/collapse all buttons
+        $('#expand-all-btn').click(function() {
+            $('.test-section').addClass('show');
+            $('button[data-test-name]').text('Hide Details');
+            $('button[data-test-name]').each(function() {
+                expandedTests.add($(this).attr('data-test-name'));
+            });
+        });
+
+        $('#collapse-all-btn').click(function() {
+            $('.test-section').removeClass('show');
+            $('button[data-test-name]').text('View Details');
+            expandedTests.clear();
+        });
+
+        // Initial system info load
+        updateSystemInfo();
+
+        // Start WebSocket connection
+        setupWebSocket();
+    });
+    </script>
+</body>
+</html>

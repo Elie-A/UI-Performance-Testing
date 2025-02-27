@@ -3,7 +3,7 @@ Library    ../utils/keywords/login_keywords.py
 Library    ../utils/keywords/products_keywords.py
 
 *** Variables ***
-@{SORT_OPTIONS}    Name (A to Z)    Name (Z to A)    Price (low to high)    Price (high to low)
+@{SORT_OPTIONS}    Name (A to Z)    Name (Z to A)    Price (low to high)    Price (high to low)    Name (A to Z)    Name (Z to A)    Price (low to high)    Price (high to low)    Name (A to Z)    Name (Z to A)    Price (low to high)    Price (high to low)    Name (A to Z)    Name (Z to A)    Price (low to high)    Price (high to low)    Name (A to Z)    Name (Z to A)    Price (low to high)    Price (high to low)    Name (A to Z)    Name (Z to A)    Price (low to high)    Price (high to low)    Name (A to Z)    Name (Z to A)    Price (low to high)    Price (high to low)    Name (A to Z)    Name (Z to A)    Price (low to high)    Price (high to low)    Name (A to Z)    Name (Z to A)    Price (low to high)    Price (high to low)    Name (A to Z)    Name (Z to A)    Price (low to high)    Price (high to low)    Name (A to Z)    Name (Z to A)    Price (low to high)    Price (high to low)    Name (A to Z)    Name (Z to A)    Price (low to high)    Price (high to low)    Name (A to Z)    Name (Z to A)    Price (low to high)    Price (high to low)
 
 *** Test Cases ***
 Login

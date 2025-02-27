@@ -1,0 +1,29 @@
+{
+    "configurations": [
+      {
+        "type": "robotcode",
+        "name": "RobotCode: Launch template",
+        "request": "launch",
+        "target": "${workspaceFolder}/tests/",
+        "args": [
+          "--outputdir",
+          "logs",
+          "--suite",
+          "*",
+          "--exclude",
+          "do-not-run",
+        //   "--variable",
+        //   "ENV:${input:env}"
+        ]
+      }
+    ],
+    // "inputs": [
+    //   {
+    //     "id": "env",
+    //     "type": "pickString",
+    //     "description": "Choose your target environment",
+    //     "options": ["dev", "uat", "pdt", "prd"],
+    //     "default": "dev"
+    //   }
+    // ]
+  }
