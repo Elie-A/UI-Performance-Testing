@@ -38,3 +38,7 @@ class PerformanceLibrary:
     def generate_performance_html_report(self, test_name: str):
         """Generate and return performance report"""
         return self.monitor.generate_html_report(test_name)
+
+    def end_performance_monitoring(self, test_name: str):
+        """End monitoring performance for a test and mark it as completed"""
+        self.monitor.end_test_session(test_name)

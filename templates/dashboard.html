@@ -147,154 +147,134 @@
             </div>
         </div>
         
-        <!-- Test Details Container - All tests shown here -->
+        <!-- Test Details Container -->
         <div id="test-details-container">
-            <!-- Test sections will be populated here by JavaScript -->
+            <!-- Test sections will be populated here -->
         </div>
     </div>
 
     <script>
-        // Maps to store charts for each test
-    const actionDurationCharts = {};
-    const resourceUsageCharts = {};
-    let expandedTests = new Set();
+        const ITEMS_PER_PAGE = 20;
+        const actionDurationCharts = {};
+        const resourceUsageCharts = {};
+        let expandedTests = new Set();
 
-    // Format date and time
-    function formatDateTime(dateTimeStr) {
-        const date = new Date(dateTimeStr);
-        return date.toLocaleString();
-    }
+        function formatDateTime(dateTimeStr) {
+            const date = new Date(dateTimeStr);
+            return date.toLocaleString();
+        }
 
-    // Format seconds to display with 3 decimal places
-    function formatSeconds(seconds) {
-        return seconds.toFixed(3);
-    }
+        function formatSeconds(seconds) {
+            return seconds.toFixed(3);
+        }
 
-    // WebSocket connection setup
-    function setupWebSocket() {
-        const ws = new WebSocket('ws://' + window.location.host + '/ws/metrics');
+        function setupWebSocket() {
+            const ws = new WebSocket('ws://' + window.location.host + '/ws/metrics');
 
-        ws.onopen = function() {
-            console.log('WebSocket connection established');
-            $('#loading-indicator').hide();
-        };
+            ws.onopen = function() {
+                console.log('WebSocket connection established');
+                $('#loading-indicator').hide();
+            };
 
-        ws.onmessage = function(event) {
-            const data = JSON.parse(event.data);
-            const metrics = data.metrics;
-            const lastUpdate = data.last_update;
+            ws.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                const metrics = data.metrics;
+                const lastUpdate = data.last_update;
 
-            // Update last update time
-            if (lastUpdate) {
-                const updateTime = new Date(lastUpdate * 1000);
-                $('#last-update-time').text(updateTime.toLocaleString());
-            }
+                if (lastUpdate) {
+                    const updateTime = new Date(lastUpdate * 1000);
+                    $('#last-update-time').text(updateTime.toLocaleString());
+                }
 
-            // Get sorted test names
-            const testNames = Object.keys(metrics).sort();
+                const testNames = Object.keys(metrics).sort();
+                updateSystemInfo();
+                $('#active-tests-count').text(testNames.length);
+                updateTestsOverview(metrics, testNames);
+                updateAllTestDetails(metrics, testNames);
+            };
 
-            // Update system info (could also be sent via WebSocket if dynamic)
-            updateSystemInfo();
+            ws.onerror = function(error) {
+                console.error('WebSocket error:', error);
+                $('#loading-indicator').hide();
+            };
 
-            // Update active tests count
-            $('#active-tests-count').text(testNames.length);
+            ws.onclose = function() {
+                console.log('WebSocket connection closed, attempting to reconnect...');
+                $('#loading-indicator').show();
+                setTimeout(setupWebSocket, 1000);
+            };
+        }
 
-            // Update tests overview
-            updateTestsOverview(metrics, testNames);
+        function updateSystemInfo() {
+            $.getJSON('/api/system_info', function(data) {
+                $('#os-info').text(data.os || '-');
+                $('#os-version').text(data.os_version || '-');
+                $('#cpu-usage').text(data.cpu || '-');
+                $('#memory-info').text(data.memory || '-');
+            });
+        }
 
-            // Update or create test details for all tests
-            updateAllTestDetails(metrics, testNames);
-        };
+        function updateTestsOverview(metrics, testNames) {
+            const tbody = $('#tests-overview-body');
+            tbody.empty();
 
-        ws.onerror = function(error) {
-            console.error('WebSocket error:', error);
-            $('#loading-indicator').hide();
-        };
+            testNames.forEach(function(testName) {
+                const testData = metrics[testName];
+                const row = $('<tr>');
 
-        ws.onclose = function() {
-            console.log('WebSocket connection closed, attempting to reconnect...');
-            $('#loading-indicator').show();
-            setTimeout(setupWebSocket, 1000); // Reconnect after 1 second
-        };
-    }
+                let totalActions = 0;
+                let avgDuration = 0;
+                let totalDuration = 0;
 
-    // Update system information (kept as AJAX for initial load or if not part of WebSocket data)
-    function updateSystemInfo() {
-        $.getJSON('/api/system_info', function(data) {
-            $('#os-info').text(data.os || '-');
-            $('#os-version').text(data.os_version || '-');
-            $('#cpu-usage').text(data.cpu || '-');
-            $('#memory-info').text(data.memory || '-');
-        });
-    }
+                if (testData.actions && testData.actions.length > 0) {
+                    totalActions = testData.actions.length;
+                    totalDuration = testData.actions.reduce((sum, action) => sum + action.duration, 0);
+                    avgDuration = totalDuration / totalActions;
+                }
 
-    // Update tests overview
-    function updateTestsOverview(metrics, testNames) {
-        const tbody = $('#tests-overview-body');
-        tbody.empty();
+                const status = testData.status || 'Running';
+                const statusClass = status === 'Completed' ? 'success' : 'primary';
 
-        testNames.forEach(function(testName) {
-            const testData = metrics[testName];
-            const row = $('<tr>');
+                row.append($('<td>').text(testName));
+                row.append($('<td>').html(`<span class="badge bg-${statusClass}">${status}</span>`));
+                row.append($('<td>').text(totalActions));
+                row.append($('<td>').text(formatSeconds(avgDuration) + 's'));
+                row.append($('<td>').text(formatSeconds(totalDuration) + 's'));
 
-            let totalActions = 0;
-            let avgDuration = 0;
-            let totalDuration = 0;
+                const actionsCell = $('<td>');
+                const toggleBtn = $('<button>')
+                    .addClass('btn btn-sm btn-outline-primary')
+                    .attr('type', 'button')
+                    .attr('data-test-name', testName)
+                    .text(expandedTests.has(testName) ? 'Hide Details' : 'View Details')
+                    .on('click', function() {
+                        const testSectionId = `test-section-${testName.replace(/\s+/g, '-')}`;
+                        const testSection = $(`#${testSectionId}`);
+                        const $this = $(this);
 
-            if (testData.actions && testData.actions.length > 0) {
-                totalActions = testData.actions.length;
-                totalDuration = testData.actions.reduce((sum, action) => sum + action.duration, 0);
-                avgDuration = totalDuration / totalActions;
-            }
+                        testSection.toggleClass('show');
+                        if (testSection.hasClass('show')) {
+                            $this.text('Hide Details');
+                            expandedTests.add(testName);
+                        } else {
+                            $this.text('View Details');
+                            expandedTests.delete(testName);
+                        }
+                    });
 
-            const status = testData.status || 'Running';
-            const statusClass = status === 'Completed' ? 'success' : 'primary';
+                actionsCell.append(toggleBtn);
+                row.append(actionsCell);
+                tbody.append(row);
+            });
+        }
 
-            row.append($('<td>').text(testName));
-            row.append($('<td>').html(`<span class="badge bg-${statusClass}">${status}</span>`));
-            row.append($('<td>').text(totalActions));
-            row.append($('<td>').text(formatSeconds(avgDuration) + 's'));
-            row.append($('<td>').text(formatSeconds(totalDuration) + 's'));
-
-            const actionsCell = $('<td>');
-            const expandBtn = $('<button>')
-                .addClass('btn btn-sm btn-outline-primary')
-                .attr('type', 'button')
-                .attr('data-test-name', testName)
-                .text(expandedTests.has(testName) ? 'Hide Details' : 'View Details')
-                .on('click', function() {
-                    const testSectionId = `test-section-${testName.replace(/\s+/g, '-')}`;
-                    const testSection = $(`#${testSectionId}`);
-
-                    if (testSection.hasClass('show')) {
-                        testSection.removeClass('show');
-                        $(this).text('View Details');
-                        expandedTests.delete(testName);
-                    } else {
-                        testSection.addClass('show');
-                        $(this).text('Hide Details');
-                        expandedTests.add(testName);
-                    }
-                });
-
-            actionsCell.append(expandBtn);
-            row.append(actionsCell);
-
-            tbody.append(row);
-        });
-    }
-        
-        // Update all test details
         function updateAllTestDetails(metrics, testNames) {
             const container = $('#test-details-container');
             
-            // First, check for tests that no longer exist and remove them
             container.find('.test-section').each(function() {
                 const testName = $(this).data('test-name');
                 if (!metrics[testName]) {
                     $(this).remove();
-                    
-                    // Clean up charts
                     if (actionDurationCharts[testName]) {
                         actionDurationCharts[testName].destroy();
                         delete actionDurationCharts[testName];
@@ -306,90 +286,67 @@
                 }
             });
             
-            // Then update or create test sections
             testNames.forEach(function(testName) {
                 const testData = metrics[testName];
                 const testSectionId = `test-section-${testName.replace(/\s+/g, '-')}`;
-                
-                // Check if section already exists
                 let testSection = $(`#${testSectionId}`);
                 
                 if (testSection.length === 0) {
-                    // Create new test section
                     testSection = createTestSection(testName, testSectionId);
                     container.append(testSection);
+                    testSection.addClass('show'); // Expand by default
+                    expandedTests.add(testName); // Add to expanded set
+                    $(`button[data-test-name="${testName}"]`).text('Hide Details'); // Set initial button text
                 }
                 
-                // Update section content
                 updateTestSectionContent(testName, testData);
-                
-                // Show expanded sections
-                if (expandedTests.has(testName)) {
-                    testSection.addClass('show');
-                    $(`button[data-test-name="${testName}"]`).text('Hide Details');
-                }
             });
         }
-        
-        // Create a new test section
+
         function createTestSection(testName, sectionId) {
             const section = $('<div>')
-                .addClass('test-section collapse')
+                .addClass('test-section collapse show') // Add 'show' class by default
                 .attr('id', sectionId)
                 .attr('data-test-name', testName);
             
-            // Test title
             section.append($('<h3>').addClass('test-title').text(testName));
             
-            // Charts row
             const chartsRow = $('<div>').addClass('row');
-            
-            // Action Duration Chart
             const actionChartCol = $('<div>').addClass('col-md-6');
             const actionChartCard = $('<div>').addClass('card');
             actionChartCard.append($('<div>').addClass('card-header').text('Action Duration Chart'));
-            
             const actionChartBody = $('<div>').addClass('card-body');
             const actionChartContainer = $('<div>').addClass('chart-container');
             const actionCanvas = $('<canvas>')
                 .attr('id', `action-duration-chart-${testName.replace(/\s+/g, '-')}`);
-            
             actionChartContainer.append(actionCanvas);
             actionChartBody.append(actionChartContainer);
             actionChartCard.append(actionChartBody);
             actionChartCol.append(actionChartCard);
             
-            // Resource Usage Chart
             const resourceChartCol = $('<div>').addClass('col-md-6');
             const resourceChartCard = $('<div>').addClass('card');
             resourceChartCard.append($('<div>').addClass('card-header').text('Resource Usage Chart'));
-            
             const resourceChartBody = $('<div>').addClass('card-body');
             const resourceChartContainer = $('<div>').addClass('chart-container');
             const resourceCanvas = $('<canvas>')
                 .attr('id', `resource-usage-chart-${testName.replace(/\s+/g, '-')}`);
-            
             resourceChartContainer.append(resourceCanvas);
             resourceChartBody.append(resourceChartContainer);
             resourceChartCard.append(resourceChartBody);
             resourceChartCol.append(resourceChartCard);
             
-            // Add charts to row
             chartsRow.append(actionChartCol);
             chartsRow.append(resourceChartCol);
             section.append(chartsRow);
             
-            // Action Summary Table
             const summaryRow = $('<div>').addClass('row mt-4');
             const summaryCol = $('<div>').addClass('col-12');
             const summaryCard = $('<div>').addClass('card');
             summaryCard.append($('<div>').addClass('card-header').text('Action Summary'));
-            
             const summaryBody = $('<div>').addClass('card-body');
             const summaryTableContainer = $('<div>').addClass('table-responsive');
             const summaryTable = $('<table>').addClass('table table-striped');
-            
-            // Add table header
             const summaryThead = $('<thead>');
             const summaryHeaderRow = $('<tr>');
             summaryHeaderRow.append($('<th>').text('Action'));
@@ -399,11 +356,8 @@
             summaryHeaderRow.append($('<th>').text('Max Duration (s)'));
             summaryHeaderRow.append($('<th>').text('Total Duration (s)'));
             summaryThead.append(summaryHeaderRow);
-            
-            // Add table body
             const summaryTbody = $('<tbody>')
                 .attr('id', `action-summary-body-${testName.replace(/\s+/g, '-')}`);
-            
             summaryTable.append(summaryThead);
             summaryTable.append(summaryTbody);
             summaryTableContainer.append(summaryTable);
@@ -413,17 +367,13 @@
             summaryRow.append(summaryCol);
             section.append(summaryRow);
             
-            // Action Details Table
             const detailsRow = $('<div>').addClass('row mt-4');
             const detailsCol = $('<div>').addClass('col-12');
             const detailsCard = $('<div>').addClass('card');
             detailsCard.append($('<div>').addClass('card-header').text('Action Details'));
-            
             const detailsBody = $('<div>').addClass('card-body');
             const detailsTableContainer = $('<div>').addClass('table-responsive');
             const detailsTable = $('<table>').addClass('table table-striped table-sm');
-            
-            // Add table header
             const detailsThead = $('<thead>');
             const detailsHeaderRow = $('<tr>');
             detailsHeaderRow.append($('<th>').text('Step #'));
@@ -433,15 +383,24 @@
             detailsHeaderRow.append($('<th>').text('CPU Usage'));
             detailsHeaderRow.append($('<th>').text('Memory Usage'));
             detailsThead.append(detailsHeaderRow);
-            
-            // Add table body
             const detailsTbody = $('<tbody>')
                 .attr('id', `action-details-body-${testName.replace(/\s+/g, '-')}`);
-            
             detailsTable.append(detailsThead);
             detailsTable.append(detailsTbody);
             detailsTableContainer.append(detailsTable);
+            
+            const paginationContainer = $('<div>')
+                .addClass('d-flex justify-content-between align-items-center mt-3')
+                .attr('id', `pagination-${testName.replace(/\s+/g, '-')}`);
+            const pageInfo = $('<span>').attr('id', `page-info-${testName.replace(/\s+/g, '-')}`);
+            const navControls = $('<nav>').attr('aria-label', 'Action details pagination');
+            const ul = $('<ul>').addClass('pagination mb-0');
+            paginationContainer.append(pageInfo);
+            paginationContainer.append(navControls);
+            navControls.append(ul);
+            
             detailsBody.append(detailsTableContainer);
+            detailsBody.append(paginationContainer);
             detailsCard.append(detailsBody);
             detailsCol.append(detailsCard);
             detailsRow.append(detailsCol);
@@ -449,22 +408,14 @@
             
             return section;
         }
-        
-        // Update content for a test section
+
         function updateTestSectionContent(testName, testData) {
             const safeTestName = testName.replace(/\s+/g, '-');
-            
-            // Update action summary table
             updateActionSummary(testName, testData.summary || {});
-            
-            // Update action details table
             updateActionDetails(testName, testData.actions || []);
-            
-            // Update charts
             updateTestCharts(testName, testData);
         }
-        
-        // Update action summary table for a specific test
+
         function updateActionSummary(testName, summary) {
             const safeTestName = testName.replace(/\s+/g, '-');
             const tbody = $(`#action-summary-body-${safeTestName}`);
@@ -473,55 +424,130 @@
             Object.keys(summary).forEach(function(actionName) {
                 const data = summary[actionName];
                 const row = $('<tr>');
-                
                 row.append($('<td>').text(actionName));
                 row.append($('<td>').text(data.count));
                 row.append($('<td>').text(formatSeconds(data.avg_duration)));
                 row.append($('<td>').text(formatSeconds(data.min_duration)));
                 row.append($('<td>').text(formatSeconds(data.max_duration)));
                 row.append($('<td>').text(formatSeconds(data.total_duration)));
-                
                 tbody.append(row);
             });
         }
-        
-        // Update action details table for a specific test
+
         function updateActionDetails(testName, actions) {
             const safeTestName = testName.replace(/\s+/g, '-');
             const tbody = $(`#action-details-body-${safeTestName}`);
-            tbody.empty();
+            const paginationContainer = $(`#pagination-${safeTestName}`);
+            const pageInfo = $(`#page-info-${safeTestName}`);
             
-            // Sort actions by step order
             actions.sort((a, b) => a.step_order - b.step_order);
+            const totalItems = actions.length;
+            const totalPages = Math.ceil(totalItems / ITEMS_PER_PAGE);
+            let currentPage = 1;
             
-            actions.forEach(function(action) {
-                const row = $('<tr>');
+            function renderPage(page) {
+                tbody.empty();
+                const startIndex = (page - 1) * ITEMS_PER_PAGE;
+                const endIndex = Math.min(startIndex + ITEMS_PER_PAGE, totalItems);
+                const pageActions = actions.slice(startIndex, endIndex);
                 
-                row.append($('<td>').text(action.step_order));
-                row.append($('<td>').text(action.action));
-                row.append($('<td>').text(formatDateTime(action.start_time)));
-                row.append($('<td>').text(formatSeconds(action.duration)));
-                row.append($('<td>').text(action.cpu_usage));
-                row.append($('<td>').text(action.memory_usage));
+                pageActions.forEach(function(action) {
+                    const row = $('<tr>');
+                    row.append($('<td>').text(action.step_order));
+                    row.append($('<td>').text(action.action));
+                    row.append($('<td>').text(formatDateTime(action.start_time)));
+                    row.append($('<td>').text(formatSeconds(action.duration)));
+                    row.append($('<td>').text(action.cpu_usage));
+                    row.append($('<td>').text(action.memory_usage));
+                    tbody.append(row);
+                });
                 
-                tbody.append(row);
-            });
+                pageInfo.text(`Showing ${startIndex + 1} to ${endIndex} of ${totalItems} actions`);
+            }
+            
+            function renderPagination() {
+                const ul = paginationContainer.find('.pagination');
+                ul.empty();
+                
+                const prevLi = $('<li>').addClass('page-item').toggleClass('disabled', currentPage === 1);
+                const prevLink = $('<a>').addClass('page-link').attr('href', '#').text('Previous');
+                prevLink.on('click', function(e) {
+                    e.preventDefault();
+                    if (currentPage > 1) {
+                        currentPage--;
+                        renderPage(currentPage);
+                        renderPagination();
+                    }
+                });
+                prevLi.append(prevLink);
+                ul.append(prevLi);
+                
+                const startPage = Math.max(1, currentPage - 2);
+                const endPage = Math.min(totalPages, currentPage + 2);
+                
+                if (startPage > 1) {
+                    ul.append(createPageItem(1));
+                    if (startPage > 2) {
+                        ul.append($('<li>').addClass('page-item disabled').append($('<span>').addClass('page-link').text('...')));
+                    }
+                }
+                
+                for (let i = startPage; i <= endPage; i++) {
+                    ul.append(createPageItem(i));
+                }
+                
+                if (endPage < totalPages) {
+                    if (endPage < totalPages - 1) {
+                        ul.append($('<li>').addClass('page-item disabled').append($('<span>').addClass('page-link').text('...')));
+                    }
+                    ul.append(createPageItem(totalPages));
+                }
+                
+                const nextLi = $('<li>').addClass('page-item').toggleClass('disabled', currentPage === totalPages);
+                const nextLink = $('<a>').addClass('page-link').attr('href', '#').text('Next');
+                nextLink.on('click', function(e) {
+                    e.preventDefault();
+                    if (currentPage < totalPages) {
+                        currentPage++;
+                        renderPage(currentPage);
+                        renderPagination();
+                    }
+                });
+                nextLi.append(nextLink);
+                ul.append(nextLi);
+            }
+            
+            function createPageItem(pageNum) {
+                const li = $('<li>').addClass('page-item').toggleClass('active', pageNum === currentPage);
+                const link = $('<a>').addClass('page-link').attr('href', '#').text(pageNum);
+                link.on('click', function(e) {
+                    e.preventDefault();
+                    currentPage = pageNum;
+                    renderPage(currentPage);
+                    renderPagination();
+                });
+                li.append(link);
+                return li;
+            }
+            
+            if (totalItems > 0) {
+                renderPage(1);
+                renderPagination();
+                paginationContainer.show();
+            } else {
+                tbody.append($('<tr>').append($('<td>').attr('colspan', 6).text('No actions available')));
+                paginationContainer.hide();
+            }
         }
-        
-        // Update charts for a specific test
+
         function updateTestCharts(testName, testData) {
             const safeTestName = testName.replace(/\s+/g, '-');
             const actions = testData.actions || [];
-            
-            // Prepare data for action duration chart
             const actionLabels = actions.map(a => `${a.step_order}. ${a.action.substring(0, 20)}${a.action.length > 20 ? '...' : ''}`);
             const actionDurations = actions.map(a => a.duration);
-            
-            // Prepare data for resource usage chart
             const cpuUsage = actions.map(a => parseFloat(a.cpu_usage.replace('%', '')));
             const memoryUsage = actions.map(a => parseFloat(a.memory_usage.split(' ')[0]));
             
-            // Update or create action duration chart
             if (actionDurationCharts[testName]) {
                 actionDurationCharts[testName].data.labels = actionLabels;
                 actionDurationCharts[testName].data.datasets[0].data = actionDurations;
@@ -544,31 +570,14 @@
                         responsive: true,
                         maintainAspectRatio: false,
                         scales: {
-                            y: {
-                                beginAtZero: true,
-                                title: {
-                                    display: true,
-                                    text: 'Seconds'
-                                }
-                            },
-                            x: {
-                                ticks: {
-                                    maxRotation: 45,
-                                    minRotation: 45
-                                }
-                            }
+                            y: { beginAtZero: true, title: { display: true, text: 'Seconds' } },
+                            x: { ticks: { maxRotation: 45, minRotation: 45 } }
                         },
-                        plugins: {
-                            title: {
-                                display: true,
-                                text: 'Action Duration'
-                            }
-                        }
+                        plugins: { title: { display: true, text: 'Action Duration' } }
                     }
                 });
             }
             
-            // Update or create resource usage chart
             if (resourceUsageCharts[testName]) {
                 resourceUsageCharts[testName].data.labels = actionLabels;
                 resourceUsageCharts[testName].data.datasets[0].data = cpuUsage;
@@ -600,70 +609,36 @@
                         responsive: true,
                         maintainAspectRatio: false,
                         scales: {
-                            y: {
-                                type: 'linear',
-                                display: true,
-                                position: 'left',
-                                title: {
-                                    display: true,
-                                    text: 'CPU Usage (%)'
-                                }
-                            },
-                            y1: {
-                                type: 'linear',
-                                display: true,
-                                position: 'right',
-                                title: {
-                                    display: true,
-                                    text: 'Memory Usage (MB)'
-                                },
-                                grid: {
-                                    drawOnChartArea: false
-                                }
-                            },
-                            x: {
-                                ticks: {
-                                    maxRotation: 45,
-                                    minRotation: 45
-                                }
-                            }
+                            y: { type: 'linear', display: true, position: 'left', title: { display: true, text: 'CPU Usage (%)' } },
+                            y1: { type: 'linear', display: true, position: 'right', title: { display: true, text: 'Memory Usage (MB)' }, grid: { drawOnChartArea: false } },
+                            x: { ticks: { maxRotation: 45, minRotation: 45 } }
                         },
-                        plugins: {
-                            title: {
-                                display: true,
-                                text: 'Resource Usage'
-                            }
-                        }
+                        plugins: { title: { display: true, text: 'Resource Usage' } }
                     }
                 });
             }
         }
-        
-       // Initialize the page
-    $(document).ready(function() {
-        $('#loading-indicator').hide();
 
-        // Set up expand/collapse all buttons
-        $('#expand-all-btn').click(function() {
-            $('.test-section').addClass('show');
-            $('button[data-test-name]').text('Hide Details');
-            $('button[data-test-name]').each(function() {
-                expandedTests.add($(this).attr('data-test-name'));
+        $(document).ready(function() {
+            $('#loading-indicator').hide();
+
+            $('#expand-all-btn').click(function() {
+                $('.test-section').addClass('show');
+                $('button[data-test-name]').text('Hide Details');
+                $('button[data-test-name]').each(function() {
+                    expandedTests.add($(this).attr('data-test-name'));
+                });
             });
+
+            $('#collapse-all-btn').click(function() {
+                $('.test-section').removeClass('show');
+                $('button[data-test-name]').text('View Details');
+                expandedTests.clear();
+            });
+
+            updateSystemInfo();
+            setupWebSocket();
         });
-
-        $('#collapse-all-btn').click(function() {
-            $('.test-section').removeClass('show');
-            $('button[data-test-name]').text('View Details');
-            expandedTests.clear();
-        });
-
-        // Initial system info load
-        updateSystemInfo();
-
-        // Start WebSocket connection
-        setupWebSocket();
-    });
     </script>
 </body>
 </html>

@@ -15,5 +15,6 @@ Close Browser Driver And Generate Report
     Close Browser
     Close Context
     Save Performance Metrics
-    Generate Performance Report    ${SUITE_NAME}
-    Generate HTML Performance Report    ${SUITE_NAME}
+    # Generate Performance Report    ${SUITE_NAME}
+    # Generate HTML Performance Report    ${SUITE_NAME}
+    End Performance Monitoring    ${SUITE_NAME}

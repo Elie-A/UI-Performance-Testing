@@ -58,3 +58,8 @@ def measure_keyword(keyword_name: str, *args, **kwargs):
     """Measure the performance of a Robot Framework keyword."""
     decorated_keyword = performance_keyword(keyword_name)(lambda: BuiltIn().run_keyword(keyword_name, *args, **kwargs))
     decorated_keyword()
+
+@keyword("End Performance Monitoring")
+def end_performance_monitoring(test_name: str):
+    """End monitoring performance for a test."""
+    performance_library.end_performance_monitoring(test_name)

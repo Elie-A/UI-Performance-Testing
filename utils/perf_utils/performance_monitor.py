@@ -77,6 +77,7 @@ class PerformanceMonitor:
                 'test_name': '',
                 'test_start_time': None,
                 'step_order': 0,
+                'failures': 0,
             }
 
     def start_test_session(self, test_name: str):
@@ -87,6 +88,7 @@ class PerformanceMonitor:
         self._ensure_test_info()
         self._local.test_info['test_name'] = test_name
         self._local.test_info['test_start_time'] = datetime.now()
+        self._local.test_info['failures'] = 0  # Reset failures for new test
 
         with self._lock:
             if test_name not in self._metrics:
@@ -101,6 +103,8 @@ class PerformanceMonitor:
                     "actions": [],
                     "system_info": system_info,
                     "execution_context": execution_context,
+                    "status": "Running",
+                    "failures": 0,
                 }
                 print("self._metrics[test_name]:", json.dumps(self._metrics[test_name], indent=4))
 
@@ -130,11 +134,13 @@ class PerformanceMonitor:
                 "step_order": step_order,
                 "cpu_usage": f"{psutil.cpu_percent()}%",
                 "memory_usage": f"{psutil.virtual_memory().used / (1024 ** 2):.2f} MB",
+                "result": "FAIL" if self._local.test_info['step_order'] <= self._local.test_info['failures'] else "PASS",
             }
 
             with self._lock:
                 test_name = self._local.test_info['test_name']
                 self._metrics[test_name]["actions"].append(action_data)
+                self._metrics[test_name]["failures"] = self._local.test_info['failures']
                 self._update_summary(test_name)
                 self._save_metrics(test_name)  # Save after each action
 
@@ -180,15 +186,26 @@ class PerformanceMonitor:
                 json.dump(self._metrics[test_name], f, indent=2)
                 logger.info(f"Metrics incrementally saved to {filename}")
 
-    def save_metrics(self):
-        """Save all metrics to files at the end of the test."""
-        if not self._is_performance_monitoring_enabled:
-            logger.info("Performance monitoring is disabled. No metrics to save.")
+    def end_test_session(self, test_name: str):
+        """Mark the test as completed and save final metrics."""
+        if not self._is_performance_monitoring_enabled or test_name not in self._metrics:
             return
-        
-        for test_name in self._metrics.keys():
+
+        with self._lock:
+            self._metrics[test_name]["status"] = "Completed"
+            self._update_summary(test_name)
             self._save_metrics(test_name)
-        logger.info("Final metrics saved.")
+            logger.info(f"Test session {test_name} completed and metrics saved.")
+
+    # def save_metrics(self):
+    #     """Save all metrics to files at the end of the test."""
+    #     if not self._is_performance_monitoring_enabled:
+    #         logger.info("Performance monitoring is disabled. No metrics to save.")
+    #         return
+        
+    #     for test_name in self._metrics.keys():
+    #         self._save_metrics(test_name)
+    #     logger.info("Final metrics saved.")
 
     def save_metrics(self):
         """Save all metrics to files and ensure summary is populated."""
@@ -204,6 +221,8 @@ class PerformanceMonitor:
         logger.info(f"Suite name: {suite_name}")
         
         for test_name, metrics in self._metrics.items():
+            if self._metrics[test_name]["status"] != "Completed":
+                self._metrics[test_name]["status"] = "Completed"
             # Ensure the summary is up-to-date before saving
             self._update_summary(test_name)
             
@@ -228,6 +247,8 @@ class PerformanceMonitor:
             "execution_context": metrics["execution_context"],
             "summary": metrics["summary"],
             "actions": metrics["actions"],
+            "status": metrics["status"],
+            "failures": metrics.get("failures", 0),
             "current_time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         }
 
